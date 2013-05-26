@@ -1,4 +1,4 @@
-megaannex
+dropboxannex
 =========
 
 Hook program for gitannex to use dropbox as backend
