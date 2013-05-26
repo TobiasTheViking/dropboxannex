@@ -17,11 +17,9 @@ Clone the git repository in your home folder.
 This should make a ~/dropboxannex folder
 
 # Setup
-Run the program once to make an empty config file
+Run the program once to set it up.
 
     cd ~/dropboxannex; python2 dropboxannex.py
-
-Edit the dropboxannex.conf file. Add your dropbox.co.nz username, password and folder name.
 
 # Commands for gitannex:
 
