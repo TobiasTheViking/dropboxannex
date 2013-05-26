@@ -116,9 +116,7 @@ def getFile(subject, filename, folder):
         common.log("file: " + repr(file))
         f, metadata = db_client.get_file_and_metadata(folder + subject)
         common.log("metadata: " + repr(metadata))
-        out = open(filename, 'w')
-        out.write(f.read())
-        out.close()
+        saveFile(filename, f.read(), "wb")
         common.log("Done")
         return True
     common.log("Failure")
