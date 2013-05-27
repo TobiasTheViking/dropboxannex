@@ -8,7 +8,7 @@ import inspect
 import webbrowser
 
 conf = False
-version = "0.1.0"
+version = "0.1.1"
 plugin = "dropboxannex-" + version
 
 pwd = os.path.dirname(__file__)
