@@ -85,7 +85,7 @@ def postFile(subject, filename, folder):
 def findInFolder(subject, folder="/"):
     common.log("%s(%s) - %s(%s)" % (repr(subject), type(subject), repr(folder), type(folder)), 0)
 
-    folder_metadata = db_client.metadata(folder)
+    folder_metadata = db_client.metadata(folder, file_limit=25000)
     
     for file in folder_metadata["contents"]:
         name = file["path"]
@@ -165,6 +165,19 @@ def createFolder(path):
     common.log(res)
     return path
 
+# Ugly hack since dropbox isn't case sensitive.
+# Add an uppercase C in front of all uppercase letters.
+def fixFolder(ah):
+    common.log(ah)
+    tmp = ""
+    for ch in ah:
+        if ch != ch.lower():
+            tmp += "C" + ch
+        else:
+            tmp += ch
+    common.log("Done: " + tmp)
+    return tmp
+
 def main():
     global conf
     args = sys.argv
@@ -190,7 +203,6 @@ def main():
     if not os.path.exists(pwd + "/dropboxannex.conf"):
         saveFile(pwd + "/dropboxannex.conf", json.dumps({"folder": "gitannex"}))
         common.log("no dropboxannex.conf file found. Creating empty template")
-        sys.exit(1)
 
     conf = readFile(pwd + "/dropboxannex.conf")
     try:
@@ -198,7 +210,7 @@ def main():
     except Exception as e:
         common.log("Traceback EXCEPTION: " + repr(e))
         common.log("Couldn't parse conf: " + repr(conf))
-        conf = {}
+        conf = {"folder": "gitannex"}
 
     common.log("Conf: " + repr(conf), 2)
 
@@ -212,6 +224,9 @@ def main():
         folder = createFolder("/" + conf["folder"])
         common.log("created folder0: " + repr(folder))
         ANNEX_FOLDER = folder + "/"
+
+    ANNEX_HASH_1 = fixFolder(ANNEX_HASH_1)
+    ANNEX_HASH_2 = fixFolder(ANNEX_HASH_2)
 
     folder = findInFolder(ANNEX_HASH_1, ANNEX_FOLDER)
     if folder:

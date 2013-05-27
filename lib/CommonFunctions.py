@@ -123,4 +123,7 @@ def log(description, level=0):
         if "--stderr" in sys.argv:
             sys.stderr.write(data + "\n")
         else:
-            print(data)
+            try:
+                print(data)
+            except:
+                print("F " + repr(data))
