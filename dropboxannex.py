@@ -60,11 +60,8 @@ def login():
         common.log("access_token: " + repr(stored_creds))
         saveFile(pwd + "/dropboxannex.creds", json.dumps(stored_creds), "wb")
     
-
     db_client = dropbox.client.DropboxClient(db_sess)
-    common.log("BLA: " + repr(db_client))
-    print "linked account:", db_client.account_info()
-    common.log("Done: " + repr(db_client))
+    common.log("Done: " + repr(db_client.account_info()))
 
 def postFile(subject, filename, folder):
     common.log("%s to %s - %s" % ( filename, folder[0], subject))
@@ -200,10 +197,6 @@ def main():
         envargs += ["ANNEX_FILE=" + ANNEX_FILE]
     common.log("ARGS: " + repr(" ".join(envargs + args)))
 
-    if not os.path.exists(pwd + "/dropboxannex.conf"):
-        saveFile(pwd + "/dropboxannex.conf", json.dumps({"folder": "gitannex"}))
-        common.log("no dropboxannex.conf file found. Creating empty template")
-
     conf = readFile(pwd + "/dropboxannex.conf")
     try:
         conf = json.loads(conf)
@@ -225,26 +218,27 @@ def main():
         common.log("created folder0: " + repr(folder))
         ANNEX_FOLDER = folder + "/"
 
-    ANNEX_HASH_1 = fixFolder(ANNEX_HASH_1)
-    ANNEX_HASH_2 = fixFolder(ANNEX_HASH_2)
+    if ANNEX_HASH_1:
+        ANNEX_HASH_1 = fixFolder(ANNEX_HASH_1)
+        folder = findInFolder(ANNEX_HASH_1, ANNEX_FOLDER)
+        if folder:
+            common.log("Using folder1: " + repr(folder))
+            ANNEX_FOLDER = folder["path"] + "/"
+        else:
+            folder = createFolder(ANNEX_FOLDER + "/" + ANNEX_HASH_1)
+            common.log("created folder1: " + repr(folder))
+            ANNEX_FOLDER = folder + "/"
 
-    folder = findInFolder(ANNEX_HASH_1, ANNEX_FOLDER)
-    if folder:
-        common.log("Using folder1: " + repr(folder))
-        ANNEX_FOLDER = folder["path"] + "/"
-    else:
-        folder = createFolder(ANNEX_FOLDER + "/" + ANNEX_HASH_1)
-        common.log("created folder1: " + repr(folder))
-        ANNEX_FOLDER = folder + "/"
-
-    folder = findInFolder(ANNEX_HASH_2, ANNEX_FOLDER)
-    if folder:
-        common.log("Using folder2: " + repr(folder))
-        ANNEX_FOLDER = folder["path"] + "/"
-    else:
-        folder = createFolder(ANNEX_FOLDER + "/" + ANNEX_HASH_2)
-        common.log("created folder2: " + repr(folder))
-        ANNEX_FOLDER = folder + "/"
+    if ANNEX_HASH_2:
+        ANNEX_HASH_2 = fixFolder(ANNEX_HASH_2)
+        folder = findInFolder(ANNEX_HASH_2, ANNEX_FOLDER)
+        if folder:
+            common.log("Using folder2: " + repr(folder))
+            ANNEX_FOLDER = folder["path"] + "/"
+        else:
+            folder = createFolder(ANNEX_FOLDER + "/" + ANNEX_HASH_2)
+            common.log("created folder2: " + repr(folder))
+            ANNEX_FOLDER = folder + "/"
 
     if "store" == ANNEX_ACTION:
         postFile(ANNEX_KEY, ANNEX_FILE, ANNEX_FOLDER)
@@ -255,7 +249,16 @@ def main():
     elif "remove" == ANNEX_ACTION:
         deleteFile(ANNEX_KEY, ANNEX_FOLDER)
     else:
-        common.log("ERROR")
+        setup = '''
+Please run the following commands in your annex directory:
+
+git config annex.dropbox-hook '/usr/bin/python2 %s/dropboxannex.py'
+git annex initremote dropbox type=hook hooktype=dropbox encryption=%s
+git annex describe dropbox "the dropbox library"
+''' % (os.getcwd(), "shared")
+        print setup
+
+        saveFile(pwd + "/dropboxannex.conf", json.dumps({"folder": "gitannex"}))
         sys.exit(1)
 
 t = time.time()
