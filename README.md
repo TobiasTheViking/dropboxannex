@@ -6,6 +6,7 @@ Hook program for gitannex to use dropbox as backend
 # Requirements:
 
     python2
+    python-pkg-resources
 
 Credit for the Dropbox api interface goes to Dropbox.
 

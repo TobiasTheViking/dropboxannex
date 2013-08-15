@@ -73,10 +73,10 @@ def postFile(subject, filename, folder):
 
     f = open(filename)
     res = db_client.put_file(folder + subject, f)
-    print "uploaded:", res
     if res:
         common.log("Done: " + repr(res))
     else:
+        common.log("Failure: " + repr(res))
         sys.exit(1)
 
 def findInFolder(subject, folder="/"):
@@ -262,6 +262,9 @@ git annex describe dropbox "the dropbox library"
         sys.exit(1)
 
 t = time.time()
+if dbglevel > 0:
+    sys.stderr.write("\n")
+
 common.log("START")
 if __name__ == '__main__':
     main()
