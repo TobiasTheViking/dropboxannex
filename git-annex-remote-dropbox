@@ -1,0 +1,391 @@
+#!/usr/bin/env python2
+import os
+import re
+import sys
+import json
+import time
+import inspect
+import webbrowser
+
+try:
+    dbglevel = int(os.getenv("DBGLEVEL") or 0)
+except:
+    dbglevel = 0
+
+conf = {}
+version = "0.2.0"
+plugin = "dropboxannex-" + version
+
+pwd = os.path.realpath(__file__)
+pwd = pwd[:pwd.rfind("/")]
+if dbglevel:
+    sys.stderr.write("Path: " + repr(pwd) + "\n")
+
+sys.path.append(pwd + '/lib')
+
+import CommonFunctions as common
+
+import dropbox
+import app
+
+import dropbox.client
+import dropbox.session
+db_sess = dropbox.session.DropboxSession(app.key, app.secret, app.type)
+db_client = False
+
+def login(stored_creds={}):
+    common.log(repr(stored_creds))
+    global db_client
+    access_token = False
+    if "key" in stored_creds and "secret" in stored_creds:
+        try:
+            db_sess.set_token(stored_creds["key"], stored_creds["secret"])
+            access_token = True
+        except Exception as e:
+            common.log("Excpetion: " + repr(e))
+
+    if not access_token:
+        request_token = db_sess.obtain_request_token()
+        url = db_sess.build_authorize_url(request_token, oauth_callback="http://127.0.0.1/auth_reply/")
+        common.log("auth: " + repr(url))
+        webbrowser.open(url, True, True)
+        common.log("Please visit this ( %s )  website and press the 'Allow' button within the next 30 seconds." % url)
+        time.sleep(30)
+        common.log("Requesting new access token")
+        try:
+            access_token = db_sess.obtain_access_token(request_token)
+            stored_creds = {"key": access_token.key, "secret": access_token.secret}
+            common.log("access_token: " + repr(stored_creds))
+        except Exception as e:
+            common.log("Exception: " + repr(e))
+            return False
+                
+    db_client = dropbox.client.DropboxClient(db_sess)
+    common.log("Done: " + repr(db_client.account_info()))
+    return stored_creds
+
+def postFile(subject, filename, folder):
+    common.log("%s to %s - %s" % ( repr(filename), folder[0], subject))
+    
+    file = findInFolder(subject, folder)
+    if file:
+        common.log("File already exists: " + repr(file))
+        return True
+
+
+    def requestinject(method, url, post_params=None, body=None, headers=None, raw_response=False):
+        post_params = post_params or {}
+        headers = headers or {}
+        headers['User-Agent'] = 'OfficialDropboxPythonSDK/' + dropbox.session.rest.SDK_VERSION
+
+        if post_params:
+            if body:
+                raise ValueError("body parameter cannot be used with post_params parameter")
+            body = urllib.urlencode(post_params)
+            headers["Content-type"] = "application/x-www-form-urlencoded"
+
+        # maintain dynamic lookup of ProperHTTPConnection                                                                                                     
+        http_connect = db_client.rest_client.IMPL.http_connect
+        if http_connect is None:
+            http_connect = dropbox.session.rest.ProperHTTPSConnection
+
+        host = dropbox.session.rest.urlparse.urlparse(url).hostname
+        conn = http_connect(host, 443)
+
+        try:
+            # This code is here because httplib in pre-2.6 Pythons
+            # doesn't handle file-like objects as HTTP bodies and
+            # thus requires manual buffering
+            if not hasattr(body, 'read'):
+                conn.request(method, url, body, headers)
+            else:
+                # Content-Length should be set to prevent upload truncation errors.
+                clen, raw_data = dropbox.session.rest.util.analyze_file_obj(body)
+                headers["Content-Length"] = str(clen)
+                conn.request(method, url, "", headers)
+                if raw_data is not None:
+                    conn.send(raw_data)
+                else:
+                    BLOCKSIZE = 1024 * 100
+                    bytes_read = 0
+                    while True:
+                        data = body.read(BLOCKSIZE)
+                        if not data:
+                            break
+                        # Catch Content-Length overflow before the HTTP server does
+                        bytes_read += len(data)
+                        if bytes_read > clen:
+                            raise dropbox.session.rest.util.AnalyzeFileObjBug(clen, bytes_read)
+                        conn.send(data)
+                        common.progress(clen, bytes_read)
+
+                    if bytes_read != clen:
+                        raise dropbox.session.rest.util.AnalyzeFileObjBug(clen, bytes_read)
+
+        except dropbox.session.rest.socket.error, e:
+            raise dropbox.session.rest.RESTSocketError(host, e)
+        except dropbox.session.rest.CertificateError, e:
+            raise dropbox.session.rest.RESTSocketError(host, "SSL certificate error: " + e)
+
+        r = conn.getresponse()
+        if r.status != 200:
+            raise dropbox.session.rest.ErrorResponse(r)
+
+        if raw_response:
+            return r
+        else:
+            try:
+                resp = dropbox.session.rest.json_loadb(r.read())
+            except ValueError:
+                raise dropbox.session.rest.ErrorResponse(r)
+            finally:
+                conn.close()
+
+                return resp
+
+    org_request = db_client.rest_client.IMPL.request
+    db_client.rest_client.IMPL.request = requestinject
+    f = open(filename)
+
+    try:
+        res = db_client.put_file(folder + subject, f)
+    except Exception as e:
+        common.log("Exception in db_client.put_file: " + repr(e), -1)
+        res = db_client.put_file(folder + subject, f)
+        res = False
+    db_client.rest_client.IMPL.request = org_request
+
+    if res:
+        common.log("Done: " + repr(res))
+        return True
+    else:
+        common.log("Failure: " + repr(res))
+        return False
+
+def findInFolder(subject, folder="/"):
+    common.log("%s(%s) - %s(%s)" % (repr(subject), type(subject), repr(folder), type(folder)), 0)
+
+    try:
+        folder_metadata = db_client.metadata(folder, file_limit=25000)
+    except Exception as e:
+        common.log("Exception: " + repr(e))
+        try:
+            folder_metadata = db_client.metadata(folder, file_limit=25000)
+        except Exception as e:
+            common.log("Exception2: " + repr(e))
+            return False
+    
+    for file in folder_metadata["contents"]:
+        name = file["path"]
+        name = name[name.rfind("/") + 1:]
+        common.log("folder: " + name + " - " + file["path"], 3)
+        if name == subject:
+            common.log("Done: " + repr(file))
+            return file
+    common.log("Failure")
+    return False
+
+def checkFile(subject, folder):
+    common.log(subject)
+    global m
+
+    file = findInFolder(subject, folder)
+    if file:
+        common.log("Found: " + repr(file))
+        return True
+    else:
+        common.log("Failure")
+        return False
+
+def getFile(subject, filename, folder):
+    common.log(subject)
+    global m
+
+    file = findInFolder(subject, folder)
+    if file:
+        common.log("file: " + repr(file))
+        f, metadata = db_client.get_file_and_metadata(folder + subject)
+        common.log("metadata: " + repr(metadata), -1)
+        time.sleep(10)
+        data = False
+        tdata = ""
+        totalsize = metadata["bytes"]
+        chunksize = totalsize / 100
+        if chunksize < 4096:
+            chunksize = 4096
+        common.log("reading with progress", 1)
+        while not data or len(tdata) > 0:
+            tdata = f.read(chunksize)
+            if not data:
+                data = tdata
+            else:
+                data += tdata
+            common.progress(totalsize, len(data))
+
+        common.saveFile(filename, data, "wb")
+        common.log("Done")
+        return True
+    common.log("Failure")
+    return False
+
+def deleteFile(subject, folder):
+    common.log(subject)
+    global m
+
+    file = findInFolder(subject, folder)
+
+    if file:
+        res = db_client.file_delete(folder + subject)
+        if res["is_deleted"]:
+            common.log("Done")
+            return True
+    common.log("Failure")
+    return False
+
+def createFolder(path):
+    common.log(path)
+    res = db_client.file_create_folder(path)
+    common.log(res)
+    return path
+
+# Ugly hack since dropbox isn't case sensitive.
+# Add an uppercase C in front of all uppercase letters.
+def fixFolder(ah):
+    common.log(ah)
+    tmp = ""
+    for ch in ah:
+        if ch != ch.lower():
+            tmp += "C" + ch
+        else:
+            tmp += ch
+    common.log("Done: " + tmp)
+    return tmp
+
+def setFolder(base, keys):
+    common.log(repr(base) + " - " + repr(keys))
+    keys = keys.replace("VALUE ", "").split("/")
+
+    folder = findInFolder(base)
+    if folder:
+        common.log("Using folder: " + repr(folder))
+        ANNEX_FOLDER = folder["path"]  + "/"
+    else:
+        folder = createFolder("/" + base)
+        common.log("created folder0: " + repr(folder))
+        ANNEX_FOLDER = folder + "/"
+
+    if keys[0]:
+        keys[0] = fixFolder(keys[0])
+        folder = findInFolder(keys[0], ANNEX_FOLDER)
+        if folder:
+            common.log("Using folder1: " + repr(folder))
+            ANNEX_FOLDER = folder["path"] + "/"
+        else:
+            folder = createFolder(ANNEX_FOLDER + "/" + keys[0])
+            common.log("created folder1: " + repr(folder))
+            ANNEX_FOLDER = folder + "/"
+
+    if keys[1]:
+        keys[1] = fixFolder(keys[1])
+        folder = findInFolder(keys[1], ANNEX_FOLDER)
+        if folder:
+            common.log("Using folder2: " + repr(folder))
+            ANNEX_FOLDER = folder["path"] + "/"
+        else:
+            folder = createFolder(ANNEX_FOLDER + "/" + keys[1])
+            common.log("created folder2: " + repr(folder))
+            ANNEX_FOLDER = folder + "/"
+
+    return ANNEX_FOLDER
+
+## gaproto interface
+
+def initremote(line):
+    common.log("")
+    myfolder = common.getConfig("folder")
+    encryption = common.getConfig("encryption")
+
+    stored_creds = login({})
+    if len(myfolder) and stored_creds["key"] and stored_creds["secret"]:
+        common.sprint('SETCONFIG myfolder ' + myfolder + '')
+        common.sprint('SETCONFIG key ' + stored_creds["key"] + '')
+        common.sprint('SETCONFIG secret ' + stored_creds["secret"] + '')
+        common.sprint('INITREMOTE-SUCCESS')
+    else:
+        common.sprint('INITREMOTE-FAILURE You need to set folder and encryption parameters when running initremote.')
+    common.log("Done")
+
+def prepare(line):
+    common.log("")
+    creds = common.getCreds()
+
+    key = common.getConfig("key")
+    secret = common.getConfig("secret")
+    myfolder = common.getConfig("folder")
+    encryption = common.getConfig("encryption")
+
+    if len(key) and len(secret) and len(myfolder):
+        conf["folder"] = myfolder
+        common.updateWanted(False, False)
+
+        common.sprint('DEBUG ' + plugin)
+        if login({"key": key, "secret": secret}):
+            common.sprint('PREPARE-SUCCESS')
+        else:
+            common.sprint('PREPARE-FAILURE Login failure.')
+    else:
+        common.sprint('PREPARE-FAILURE You need to set folder and encryption parameters for the remote.')
+    common.log("")
+
+def transfer(line):
+    common.log("")
+    folder = setFolder(conf["folder"], common.ask("DIRHASH " + line[2]))
+
+    if line[1] == "STORE":
+        if postFile(line[2], " ".join(line[3:]), folder):
+            common.sprint('TRANSFER-SUCCESS STORE ' + line[2] + '')
+        else:
+            common.sprint('TRANSFER-FAILURE STORE ' + line[2] + ' File could not be stored')
+    if line[1] == "RETRIEVE":
+        if getFile(line[2], " ".join(line[3:]), folder):
+            common.sprint('TRANSFER-SUCCESS RETRIEVE ' + line[2] + '')
+        else:
+            common.sprint('TRANSFER-FAILURE RETRIEVE ' + line[2] + ' File could not be retrieved')
+    common.log("Done")
+
+def checkpresent(line):
+    common.log("")
+    folder = setFolder(conf["folder"], common.ask("DIRHASH " + line[1]))
+    if not len(folder):
+        common.sprint('CHECKPRESENT-UNKNOWN ' + line[1] + ' this remote is not currently available')
+        return None
+
+    if checkFile(line[1], folder):
+        common.sprint('CHECKPRESENT-SUCCESS ' + line[1] + '')
+    else:
+        common.sprint('CHECKPRESENT-FAILURE ' + line[1] + '')
+    common.log("Done")
+
+def remove(line):
+    common.log("")
+    folder = setFolder(conf["folder"], common.ask("DIRHASH " + line[1]))
+                
+    if deleteFile(line[1], folder):
+        common.sprint('REMOVE-SUCCESS ' + line[1] + '')
+    else:
+        common.sprint('REMOVE-FAILURE ' + line[1] + ' This file could not be removed')
+    common.log("Done")
+   
+def getCost():
+    common.log("", 3)
+    common.sprint("COST 150")
+
+
+t = time.time()
+if dbglevel > 0:
+    sys.stderr.write("\n")
+
+common.log("START")
+if __name__ == '__main__':
+    common.startRemote()
+common.log("STOP: %ss" % int(time.time() - t))

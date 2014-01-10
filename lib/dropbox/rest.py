@@ -156,6 +156,9 @@ class RESTClientObject(object):
                 clen, raw_data = util.analyze_file_obj(body)
                 headers["Content-Length"] = str(clen)
                 conn.request(method, url, "", headers)
+                import sys
+                sys.stdout.write("PROGRESS -0\n")
+                sys.stdout.flush()
                 if raw_data is not None:
                     conn.send(raw_data)
                 else:
@@ -170,6 +173,7 @@ class RESTClientObject(object):
                         if bytes_read > clen:
                             raise util.AnalyzeFileObjBug(clen, bytes_read)
                         conn.send(data)
+
                     if bytes_read != clen:
                         raise util.AnalyzeFileObjBug(clen, bytes_read)
 
