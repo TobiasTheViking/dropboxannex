@@ -13,7 +13,8 @@ except:
     dbglevel = 0
 
 conf = {}
-version = "0.2.0"
+
+version = "0.2.1"
 plugin = "dropboxannex-" + version
 
 pwd = os.path.realpath(__file__)
@@ -32,6 +33,7 @@ import dropbox.client
 import dropbox.session
 db_sess = dropbox.session.DropboxSession(app.key, app.secret, app.type)
 db_client = False
+cache = {}
 
 def login(stored_creds={}):
     common.log(repr(stored_creds))
@@ -164,6 +166,13 @@ def postFile(subject, filename, folder):
 
 def findInFolder(subject, folder="/"):
     common.log("%s(%s) - %s(%s)" % (repr(subject), type(subject), repr(folder), type(folder)), 0)
+    global cache
+
+    tmp_path = (folder + "/" + subject).replace("//", "/")
+
+    if tmp_path in cache:
+        common.log("Returning from cache")
+        return cache[tmp_path]
 
     try:
         folder_metadata = db_client.metadata(folder, file_limit=25000)
@@ -178,10 +187,15 @@ def findInFolder(subject, folder="/"):
     for file in folder_metadata["contents"]:
         name = file["path"]
         name = name[name.rfind("/") + 1:]
-        common.log("folder: " + name + " - " + file["path"], 3)
-        if name == subject:
-            common.log("Done: " + repr(file))
-            return file
+	cache[(folder + "/" + name).replace("//", "/")] = file
+
+    common.log("Updated cache: " + repr(cache), 3)
+    for tmp_file in cache.keys():
+        common.log("folder: " + tmp_file + " - " + tmp_path, 3)
+    	if tmp_file == tmp_path:
+            common.log("Done: " + repr(cache[tmp_file]))
+            return cache[tmp_file]
+
     common.log("Failure")
     return False
 
